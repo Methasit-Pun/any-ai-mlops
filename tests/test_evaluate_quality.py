@@ -67,8 +67,9 @@ def test_run_evaluation_logs_aggregate_and_table(monkeypatch):
 
     assert logged_metrics["avg_quality_score"] == 3.0
     assert logged_metrics["eval_sample_size"] == 2
-    assert logged_tables["quality_eval.json"] == [
-        {"call_id": "c1", "score": 3.0, "rationale": "ok"},
-        {"call_id": "c2", "score": 3.0, "rationale": "ok"},
-    ]
+    assert logged_tables["quality_eval.json"] == {
+        "call_id": ["c1", "c2"],
+        "score": [3.0, 3.0],
+        "rationale": ["ok", "ok"],
+    }
     assert logged_tags == {"agent_id": "agent-1", "run_type": "quality_eval"}

@@ -22,7 +22,7 @@ from google import genai
 
 from . import db
 from .config import Config
-from .evaluate_quality import score_transcript
+from .evaluate_quality import rows_to_columns, score_transcript
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ def main() -> None:
     mlflow.set_experiment("judge-calibration")
     with mlflow.start_run(run_name=Config.JUDGE_MODEL):
         mlflow.log_metrics(result["metrics"])
-        mlflow.log_table(data=result["rows"], artifact_file="calibration.json")
+        mlflow.log_table(data=rows_to_columns(result["rows"]), artifact_file="calibration.json")
 
     logger.info("calibration: %s", result["metrics"])
 

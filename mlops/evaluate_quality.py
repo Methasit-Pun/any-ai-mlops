@@ -39,6 +39,11 @@ Transcript:
 """
 
 
+def rows_to_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
+    """mlflow.log_table wants a dict of columns (or a DataFrame), not a list of row-dicts."""
+    return {key: [row[key] for row in rows] for key in rows[0]}
+
+
 def score_transcript(client: genai.Client, model: str, transcript: str) -> dict[str, Any]:
     response = client.models.generate_content(
         model=model,
@@ -75,7 +80,7 @@ def run_evaluation(conn, client: genai.Client, agent_id: str, limit: int) -> Non
     with mlflow.start_run(run_name="quality-eval"):
         mlflow.log_metric("avg_quality_score", avg_score)
         mlflow.log_metric("eval_sample_size", len(rows))
-        mlflow.log_table(data=rows, artifact_file="quality_eval.json")
+        mlflow.log_table(data=rows_to_columns(rows), artifact_file="quality_eval.json")
         mlflow.set_tags({"agent_id": agent_id, "run_type": "quality_eval"})
 
     logger.info("agent %s: avg_quality_score=%.2f over %d transcripts", agent_id, avg_score, len(rows))

@@ -98,7 +98,7 @@ def log_agent_run(conn, agent: dict[str, Any]) -> None:
     call_ids = [log["call_id"] for log in conversation_logs]
     call_logs_by_id = db.get_call_logs_by_ids(conn, call_ids)
     summaries_by_id = db.get_call_summaries_by_ids(conn, call_ids)
-    appointment_count = db.get_appointment_count(conn, agent_id, since)
+    appointment_count = db.get_appointment_count_by_call_ids(conn, call_ids)
 
     metrics = aggregate_metrics(
         conversation_logs,
