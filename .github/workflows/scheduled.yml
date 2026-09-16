@@ -1,0 +1,46 @@
+name: Scheduled MLOps run
+
+# Requires these to be set in Settings > Secrets and variables > Actions
+# before this will do anything useful:
+#   secrets.DATABASE_URL       - read-only Postgres URL (same one any-ai-backend uses)
+#   secrets.GOOGLE_API_KEY     - used by the Gemini judge in evaluate_quality.py
+#   vars.MLFLOW_TRACKING_URI   - a real, internet-reachable MLflow server.
+#                                 localhost is NOT reachable from a GitHub-hosted
+#                                 runner, so this must point at a hosted/deployed
+#                                 MLflow instance, not a laptop.
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+      CHECKPOINT_PATH: checkpoint.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      # GitHub-hosted runners are ephemeral, so checkpoint.json (which tracks the
+      # last-processed timestamp per agent, see mlops/checkpoint.py) wouldn't
+      # persist across scheduled runs without this. restore-keys picks up the
+      # most recent checkpoint- entry; a new key is cached at the end of every run.
+      - uses: actions/cache@v4
+        with:
+          path: checkpoint.json
+          key: mlops-checkpoint-${{ github.run_id }}
+          restore-keys: |
+            mlops-checkpoint-
+
+      - run: python -m mlops.log_experiment
+
+      - run: python -m mlops.evaluate_quality

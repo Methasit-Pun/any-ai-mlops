@@ -1,12 +1,13 @@
 """LLM-as-judge quality evaluation for a booking voice agent's transcripts.
 
-Samples recent CallLog.transcription rows for one agent, scores each with an
-OpenAI judge against a booking-flow-specific rubric, and logs the per-example
+Samples recent CallLog.transcription rows for one agent, scores each with a
+Gemini judge against a booking-flow-specific rubric, and logs the per-example
 scores plus the aggregate as an MLflow run — tracking and quality live under
 the same experiment (`agent-<id>-<name>`) so they can be viewed together.
 
 Usage:
     python -m mlops.evaluate_quality --agent-id <id> --limit 20
+    python -m mlops.evaluate_quality  # no --agent-id: evaluates every active agent
 """
 
 import argparse
@@ -82,7 +83,7 @@ def run_evaluation(conn, client: genai.Client, agent_id: str, limit: int) -> Non
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent-id", required=True)
+    parser.add_argument("--agent-id", help="Evaluate a single agent; omit to evaluate every active agent")
     parser.add_argument("--limit", type=int, default=20)
     args = parser.parse_args()
 
@@ -90,7 +91,14 @@ def main() -> None:
     client = genai.Client(api_key=Config.GOOGLE_API_KEY)
 
     with db.get_connection() as conn:
-        run_evaluation(conn, client, args.agent_id, args.limit)
+        if args.agent_id:
+            run_evaluation(conn, client, args.agent_id, args.limit)
+            return
+
+        agents = db.get_active_agent_configs(conn)
+        logger.info("found %d active agent(s)", len(agents))
+        for agent in agents:
+            run_evaluation(conn, client, agent["id"], args.limit)
 
 
 if __name__ == "__main__":
