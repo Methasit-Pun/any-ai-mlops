@@ -15,7 +15,8 @@ import logging
 from typing import Any
 
 import mlflow
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 from . import db
 from .config import Config
@@ -37,19 +38,20 @@ Transcript:
 """
 
 
-def score_transcript(client: OpenAI, model: str, transcript: str) -> dict[str, Any]:
-    response = client.chat.completions.create(
+def score_transcript(client: genai.Client, model: str, transcript: str) -> dict[str, Any]:
+    response = client.models.generate_content(
         model=model,
-        messages=[{"role": "user", "content": RUBRIC_PROMPT.format(transcript=transcript)}],
-        response_format={"type": "json_object"},
-        temperature=0,
+        contents=RUBRIC_PROMPT.format(transcript=transcript),
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0,
+        ),
     )
-    content = response.choices[0].message.content
-    parsed = json.loads(content)
+    parsed = json.loads(response.text)
     return {"score": float(parsed["score"]), "rationale": parsed.get("rationale", "")}
 
 
-def run_evaluation(conn, client: OpenAI, agent_id: str, limit: int) -> None:
+def run_evaluation(conn, client: genai.Client, agent_id: str, limit: int) -> None:
     agent = db.get_agent_config_by_id(conn, agent_id)
     if agent is None:
         raise ValueError(f"no agent_config found with id={agent_id}")
@@ -85,7 +87,7 @@ def main() -> None:
     args = parser.parse_args()
 
     mlflow.set_tracking_uri(Config.MLFLOW_TRACKING_URI)
-    client = OpenAI(api_key=Config.OPENAI_API_KEY)
+    client = genai.Client(api_key=Config.GOOGLE_API_KEY)
 
     with db.get_connection() as conn:
         run_evaluation(conn, client, args.agent_id, args.limit)

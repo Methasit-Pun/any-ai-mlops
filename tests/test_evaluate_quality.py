@@ -7,24 +7,20 @@ import pytest
 from mlops import evaluate_quality
 
 
-def _fake_openai_response(score: int, rationale: str):
-    message = MagicMock()
-    message.content = json.dumps({"score": score, "rationale": rationale})
-    choice = MagicMock()
-    choice.message = message
+def _fake_gemini_response(score: int, rationale: str):
     response = MagicMock()
-    response.choices = [choice]
+    response.text = json.dumps({"score": score, "rationale": rationale})
     return response
 
 
 def test_score_transcript_parses_judge_response():
     client = MagicMock()
-    client.chat.completions.create.return_value = _fake_openai_response(4, "Collected all details.")
+    client.models.generate_content.return_value = _fake_gemini_response(4, "Collected all details.")
 
-    result = evaluate_quality.score_transcript(client, "gpt-4o-mini", "caller: hi... agent: ...")
+    result = evaluate_quality.score_transcript(client, "gemini-2.5-flash", "caller: hi... agent: ...")
 
     assert result == {"score": 4.0, "rationale": "Collected all details."}
-    client.chat.completions.create.assert_called_once()
+    client.models.generate_content.assert_called_once()
 
 
 def test_run_evaluation_raises_for_unknown_agent(monkeypatch):
