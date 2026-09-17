@@ -11,6 +11,9 @@ __pycache__/
 checkpoint.json
 mlruns/
 
+# Generated labeling worksheet — can contain real caller transcript content/PII
+data/transcripts_for_labeling.csv
+
 # OS
 .DS_Store
 Thumbs.db

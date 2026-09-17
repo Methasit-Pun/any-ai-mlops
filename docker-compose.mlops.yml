@@ -1,0 +1,65 @@
+# Local MLflow tracking stack for any-ai-mlops.
+# Does not touch any-ai-backend, any-chat-backend, or their existing
+# docker/render configs — purely additive.
+#
+# Usage (run from the any-ai-mlops/ directory):
+#   1. cp .env.example .env  (fill in DATABASE_URL, GOOGLE_API_KEY)
+#   2. docker compose -f docker-compose.mlops.yml up -d
+#   3. open http://localhost:5000 for the MLflow UI
+#   4. docker compose -f docker-compose.mlops.yml run --rm mlops-runner python -m mlops.log_experiment
+#   5. docker compose -f docker-compose.mlops.yml run --rm mlops-runner python -m mlops.evaluate_quality
+#      (add --agent-id <id> to evaluate a single agent)
+#   6. docker compose -f docker-compose.mlops.yml run --rm mlops-runner python -m mlops.calibrate_judge
+
+services:
+  mlflow-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - mlflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mlflow-server:
+    image: ghcr.io/mlflow/mlflow:v2.19.0
+    depends_on:
+      mlflow-postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        pip install --no-cache-dir psycopg2-binary
+        exec mlflow server \
+          --backend-store-uri postgresql://mlflow:mlflow@mlflow-postgres:5432/mlflow \
+          --default-artifact-root /mlartifacts \
+          --host 0.0.0.0 \
+          --port 5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-artifacts:/mlartifacts
+
+  mlops-runner:
+    build: .
+    depends_on:
+      - mlflow-server
+    env_file: .env
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow-server:5000
+      CHECKPOINT_PATH: /data/checkpoint.json
+    volumes:
+      - mlops-checkpoint:/data
+    # Default command runs the experiment logger once; override for
+    # evaluate_quality.py or wrap in a cron/loop for scheduled runs.
+
+volumes:
+  mlflow-postgres-data:
+  mlflow-artifacts:
+  mlops-checkpoint:

@@ -63,13 +63,15 @@ def get_conversation_logs(conn, config_id: str, since: datetime) -> list[dict[st
         return cur.fetchall()
 
 
-def _format_transcript(messages: list[dict[str, Any]] | None) -> str:
+def format_transcript(messages: Any) -> str:
     """Flattens conversation_logs.messages ([{role, content, timestamp}, ...]) into
-    the plain-text transcript the Gemini judge prompt expects.
+    the plain-text transcript the Gemini judge prompt expects. `messages` is a JSON
+    column with no schema guarantee, so anything other than a non-empty list of
+    dicts (a stray string/object/null in the data) is treated as "no transcript".
     """
-    if not messages:
+    if not isinstance(messages, list):
         return ""
-    return "\n".join(f"{m.get('role', '?')}: {m.get('content', '')}" for m in messages)
+    return "\n".join(f"{m.get('role', '?')}: {m.get('content', '')}" for m in messages if isinstance(m, dict))
 
 
 def get_call_logs_by_ids(conn, call_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -96,7 +98,7 @@ def get_call_logs_by_ids(conn, call_ids: list[str]) -> dict[str, dict[str, Any]]
                 "status": row["status"],
                 "duration": row["duration"],
                 "cost": row["cost"],
-                "transcription": _format_transcript(row["messages"]),
+                "transcription": format_transcript(row["messages"]),
             }
             for row in cur.fetchall()
         }
@@ -155,13 +157,39 @@ def get_recent_transcriptions(conn, agent_id: str, limit: int) -> list[dict[str,
             """
             SELECT call_id, messages
             FROM conversation_logs
-            WHERE config_id = %s AND messages IS NOT NULL AND jsonb_array_length(messages) > 0
+            WHERE config_id = %s
+              AND CASE WHEN jsonb_typeof(messages) = 'array' THEN jsonb_array_length(messages) > 0 ELSE false END
             ORDER BY start_time DESC
             LIMIT %s
             """,
             (agent_id, limit),
         )
         return [
-            {"call_id": row["call_id"], "transcription": _format_transcript(row["messages"])}
+            {"call_id": row["call_id"], "transcription": format_transcript(row["messages"])}
+            for row in cur.fetchall()
+        ]
+
+
+def get_all_transcripts(conn) -> list[dict[str, Any]]:
+    """Every transcript in conversation_logs regardless of agent/active status — used
+    to build a human-labeling worksheet, not by the tracking/evaluation scripts (those
+    stay scoped to active agents via get_recent_transcriptions).
+    """
+    with _dict_cursor(conn) as cur:
+        cur.execute(
+            """
+            SELECT call_id, config_name AS agent_name, start_time, messages
+            FROM conversation_logs
+            WHERE CASE WHEN jsonb_typeof(messages) = 'array' THEN jsonb_array_length(messages) > 0 ELSE false END
+            ORDER BY start_time DESC
+            """
+        )
+        return [
+            {
+                "call_id": row["call_id"],
+                "agent_name": row["agent_name"],
+                "start_time": row["start_time"],
+                "transcription": format_transcript(row["messages"]),
+            }
             for row in cur.fetchall()
         ]

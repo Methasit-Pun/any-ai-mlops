@@ -1,13 +1,17 @@
 name: Scheduled MLOps run
 
-# Requires these to be set in Settings > Secrets and variables > Actions
-# before this will do anything useful:
-#   secrets.DATABASE_URL       - read-only Postgres URL (same one any-ai-backend uses)
-#   secrets.GOOGLE_API_KEY     - used by the Gemini judge in evaluate_quality.py
-#   vars.MLFLOW_TRACKING_URI   - a real, internet-reachable MLflow server.
-#                                 localhost is NOT reachable from a GitHub-hosted
-#                                 runner, so this must point at a hosted/deployed
-#                                 MLflow instance, not a laptop.
+# Requires these to be set in Settings > Secrets and variables > Actions:
+#   secrets.DATABASE_URL          - read-only Postgres URL (same one any-ai-backend uses)
+#   secrets.GOOGLE_API_KEY        - used by the Gemini judge in evaluate_quality.py
+#   secrets.DAGSHUB_TOKEN         - DagsHub access token (Settings > User Settings > Tokens)
+#   vars.MLFLOW_TRACKING_URI      - your DagsHub MLflow endpoint:
+#                                     https://dagshub.com/<username>/<repo>.mlflow
+#   vars.DAGSHUB_USERNAME         - your DagsHub username
+#
+# DagsHub setup (one-time):
+#   1. Sign up at dagshub.com (free) and connect this GitHub repo
+#   2. Generate an access token at dagshub.com/user/settings/tokens
+#   3. Set the secrets/vars above in this repo's Settings > Secrets and variables > Actions
 on:
   schedule:
     - cron: "0 3 * * *" # 03:00 UTC daily
@@ -20,6 +24,8 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+      MLFLOW_TRACKING_USERNAME: ${{ vars.DAGSHUB_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
       CHECKPOINT_PATH: checkpoint.json
     steps:
       - uses: actions/checkout@v4
