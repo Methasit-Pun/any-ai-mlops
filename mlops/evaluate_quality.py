@@ -24,6 +24,7 @@ from google.genai import types
 
 from . import checkpoint, db
 from .config import Config
+from .log_experiment import experiment_name
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -120,8 +121,7 @@ def run_evaluation(conn, client: genai.Client, agent_id: str, limit: int) -> Non
 
     avg_score = sum(r["score"] for r in rows) / len(rows)
 
-    experiment_name = f"agent-{agent_id}-{agent['name']}"
-    mlflow.set_experiment(experiment_name)
+    mlflow.set_experiment(experiment_name(agent_id, agent["name"]))
 
     with mlflow.start_run(run_name="quality-eval"):
         mlflow.log_metric("avg_quality_score", avg_score)

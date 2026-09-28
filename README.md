@@ -34,6 +34,7 @@ python -m mlops.log_experiment                          # logs one MLflow run pe
 python -m mlops.evaluate_quality --agent-id <id>         # quality-evaluates one agent
 python -m mlops.evaluate_quality                         # quality-evaluates every active agent
 python -m mlops.calibrate_judge                          # checks the judge against data/human_labels.csv
+python -m mlops.detect_regressions                       # flags metric regressions and config changes
 ```
 
 Both `log_experiment.py` and `evaluate_quality.py` checkpoint the
@@ -63,6 +64,27 @@ Every quality-eval and calibration run is tagged with `judge_model` and
 visible in MLflow instead of silently shifting the score trend. Only compare
 quality scores across runs with the same `rubric_hash`.
 
+## Regression detection
+
+`mlops/detect_regressions.py` closes the loop: for each active agent it
+compares the latest `tracking` and `quality_eval` runs with the mean of the
+previous 7 runs, and flags a metric that moved the wrong way by more than 15%:
+
+| Run type | Metrics watched | Skipped when |
+|---|---|---|
+| `tracking` | `success_rate`, `booking_conversion_rate`, `positive_sentiment_rate` (drop), `avg_cost_per_call` (rise) | `total_calls` < 20 |
+| `quality_eval` | `avg_quality_score` (drop), only vs. runs with the same `rubric_hash` | `eval_sample_size` < 5 |
+
+It also reports agent config changes (prompt, model, voice, ...) between the
+last two tracking runs, with metrics before and after. Runs older than 36 hours
+are ignored so a stale run isn't re-reported daily. It exits non-zero on a
+regression, writes a GitHub step summary when run in Actions, and posts to
+`ALERT_WEBHOOK_URL` (Slack-compatible) if set. Tune with `--baseline-runs`,
+`--max-relative-change` and `--max-age-hours`.
+
+Only runs tagged `run_type` are compared; tracking runs logged before that tag
+was added are ignored.
+
 ## Tests
 
 ```bash
@@ -79,14 +101,16 @@ can import cleanly under pytest.
 - [.github/workflows/ci.yml](.github/workflows/ci.yml) runs the test suite on
   every push to `main` and on every pull request. No secrets required.
 - [.github/workflows/scheduled.yml](.github/workflows/scheduled.yml) runs
-  `log_experiment.py` and `evaluate_quality.py` (all active agents) daily at
-  03:00 UTC, plus on manual dispatch. This needs repo secrets/variables set
+  `log_experiment.py`, `evaluate_quality.py` (all active agents) and
+  `detect_regressions.py` daily at 03:00 UTC, plus on manual dispatch. This needs repo secrets/variables set
   under **Settings > Secrets and variables > Actions** before it does
   anything useful:
   - `secrets.DATABASE_URL`
   - `secrets.GOOGLE_API_KEY`
   - `vars.MLFLOW_TRACKING_URI` — must be a real, internet-reachable MLflow
     server; `localhost` doesn't exist from a GitHub-hosted runner.
+  - `vars.DAGSHUB_USERNAME` and `secrets.DAGSHUB_TOKEN` when using DagsHub
+  - `secrets.ALERT_WEBHOOK_URL` (optional) for regression alerts
 
   GitHub-hosted runners are ephemeral, so the workflow caches
   `checkpoint.json` between runs via `actions/cache` rather than relying on

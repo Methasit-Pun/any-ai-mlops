@@ -81,6 +81,11 @@ def aggregate_metrics(
     return metrics
 
 
+def experiment_name(agent_id: str, agent_name: str) -> str:
+    """Tracking and quality-eval runs share this experiment per agent."""
+    return f"agent-{agent_id}-{agent_name}"
+
+
 def _prompt_hash(prompt: str) -> str:
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
 
@@ -113,8 +118,7 @@ def log_agent_run(conn, agent: dict[str, Any]) -> None:
         Config.COST_PER_SECOND,
     )
 
-    experiment_name = f"agent-{agent_id}-{agent['name']}"
-    mlflow.set_experiment(experiment_name)
+    mlflow.set_experiment(experiment_name(agent_id, agent["name"]))
 
     with mlflow.start_run(run_name=until.isoformat()):
         mlflow.log_params(
@@ -132,6 +136,7 @@ def log_agent_run(conn, agent: dict[str, Any]) -> None:
         mlflow.set_tags(
             {
                 "agent_id": agent_id,
+                "run_type": "tracking",
                 "window_start": since.isoformat(),
                 "window_end": until.isoformat(),
                 "agent_config_updated_at": agent["updated_at"].isoformat(),

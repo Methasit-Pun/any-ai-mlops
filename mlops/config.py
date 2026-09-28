@@ -15,4 +15,5 @@ class Config:
     # Calls that started less than this long ago may still be in progress, so
     # log_experiment leaves them for the next run instead of counting them as failed.
     IN_PROGRESS_GRACE_SECONDS = int(os.environ.get("IN_PROGRESS_GRACE_SECONDS", "3600"))
+    ALERT_WEBHOOK_URL = os.environ.get("ALERT_WEBHOOK_URL", "")
     JUDGE_MAX_ATTEMPTS = int(os.environ.get("JUDGE_MAX_ATTEMPTS", "3"))

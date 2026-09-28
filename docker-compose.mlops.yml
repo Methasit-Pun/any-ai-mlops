@@ -10,6 +10,7 @@
 #   5. docker compose -f docker-compose.mlops.yml run --rm mlops-runner python -m mlops.evaluate_quality
 #      (add --agent-id <id> to evaluate a single agent)
 #   6. docker compose -f docker-compose.mlops.yml run --rm mlops-runner python -m mlops.calibrate_judge
+#   7. docker compose -f docker-compose.mlops.yml run --rm mlops-runner python -m mlops.detect_regressions
 
 services:
   mlflow-postgres:
