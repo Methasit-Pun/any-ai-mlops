@@ -23,7 +23,12 @@ d4e5f6,2
 ```
 
 Then run `python -m mlops.calibrate_judge` to see how well the Gemini judge
-agrees with those human scores.
+agrees with those human scores. It fails below the pass bar (see the main
+README) and needs at least 10 matched labels by default.
+
+Label across the whole scale. If every label is 1-3, a judge that never gives
+a 4 or 5 still looks well calibrated — the script warns when the labels have no
+good (4-5) or no bad (1-2) calls.
 
 Note: as of this writing, every transcript in the database is from dev/test
 traffic (`test-*`/`call_*` call_ids, agents named "test"/"(Test)", or configs

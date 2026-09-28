@@ -6,8 +6,13 @@ using the same rubric as evaluate_quality.RUBRIC_PROMPT). This re-scores those s
 reports how well it agrees with the human scores (MAE, correlation, % within
 1 point), logged to MLflow under the `judge-calibration` experiment.
 
+The run fails (non-zero exit) when the judge misses the pass bar, so a
+scheduled job flags a judge that can't be trusted. Defaults: MAE <= 0.75,
+within-1-point rate >= 0.8, at least 10 matched labels.
+
 Usage:
     python -m mlops.calibrate_judge --labels data/human_labels.csv
+    python -m mlops.calibrate_judge --max-mae 0.5 --min-within-1 0.9
 """
 
 import argparse
@@ -20,7 +25,7 @@ from google import genai
 
 from . import db
 from .config import Config
-from .evaluate_quality import rows_to_columns, score_with_retries
+from .evaluate_quality import judge_tags, rows_to_columns, score_with_retries
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -42,6 +47,32 @@ def _pearson(xs: list[float], ys: list[float]) -> float | None:
     if var_x == 0 or var_y == 0:
         return None
     return cov / (var_x * var_y) ** 0.5
+
+
+def check_pass_bar(metrics: dict[str, Any], max_mae: float, min_within_1: float, min_sample_size: int) -> list[str]:
+    """Returns the reasons the judge fails the bar; empty means it passes."""
+    failures = []
+    if metrics["sample_size"] < min_sample_size:
+        failures.append(f"sample_size {metrics['sample_size']} < {min_sample_size}")
+    if metrics["mae"] > max_mae:
+        failures.append(f"mae {metrics['mae']} > {max_mae}")
+    if metrics["within_1_point_rate"] < min_within_1:
+        failures.append(f"within_1_point_rate {metrics['within_1_point_rate']} < {min_within_1}")
+    return failures
+
+
+def label_coverage_warning(human_labels: dict[str, float]) -> str | None:
+    """Agreement numbers mean little if the labels never include a good (4-5) or a
+    bad (1-2) call — the judge could miss that whole end of the scale unnoticed."""
+    scores = human_labels.values()
+    missing = []
+    if not any(s >= 4 for s in scores):
+        missing.append("good (4-5)")
+    if not any(s <= 2 for s in scores):
+        missing.append("bad (1-2)")
+    if missing:
+        return f"labels contain no {' or '.join(missing)} calls; add some for a meaningful calibration"
+    return None
 
 
 def run_calibration(conn, client: genai.Client, model: str, human_labels: dict[str, float]) -> dict[str, Any]:
@@ -88,11 +119,17 @@ def run_calibration(conn, client: genai.Client, model: str, human_labels: dict[s
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--labels", default="data/human_labels.csv")
+    parser.add_argument("--max-mae", type=float, default=0.75)
+    parser.add_argument("--min-within-1", type=float, default=0.8)
+    parser.add_argument("--min-sample-size", type=int, default=10)
     args = parser.parse_args()
 
     human_labels = load_human_labels(args.labels)
     if not human_labels:
         raise SystemExit(f"no labeled rows in {args.labels} -- add call_id,human_score rows first")
+    coverage_warning = label_coverage_warning(human_labels)
+    if coverage_warning:
+        logger.warning(coverage_warning)
 
     mlflow.set_tracking_uri(Config.MLFLOW_TRACKING_URI)
     client = genai.Client(api_key=Config.GOOGLE_API_KEY)
@@ -100,12 +137,18 @@ def main() -> None:
     with db.get_connection() as conn:
         result = run_calibration(conn, client, Config.JUDGE_MODEL, human_labels)
 
+    failures = check_pass_bar(result["metrics"], args.max_mae, args.min_within_1, args.min_sample_size)
+
     mlflow.set_experiment("judge-calibration")
     with mlflow.start_run(run_name=Config.JUDGE_MODEL):
-        mlflow.log_metrics(result["metrics"])
+        mlflow.log_metrics({**result["metrics"], "passed": 0 if failures else 1})
         mlflow.log_table(data=rows_to_columns(result["rows"]), artifact_file="calibration.json")
+        mlflow.set_tags({**judge_tags(), "labels_file": args.labels})
 
     logger.info("calibration: %s", result["metrics"])
+    if failures:
+        raise SystemExit("judge failed calibration: " + "; ".join(failures))
+    logger.info("judge passed calibration")
 
 
 if __name__ == "__main__":

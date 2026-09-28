@@ -1,0 +1,29 @@
+name: Judge calibration
+
+# Re-checks the Gemini judge against data/human_labels.csv weekly. Fails (and
+# GitHub emails the repo owner) when the judge misses the pass bar in
+# mlops/calibrate_judge.py. Uses the same secrets/vars as scheduled.yml.
+on:
+  schedule:
+    - cron: "0 4 * * 1" # 04:00 UTC every Monday
+  workflow_dispatch: {}
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+      MLFLOW_TRACKING_USERNAME: ${{ vars.DAGSHUB_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - run: python -m mlops.calibrate_judge

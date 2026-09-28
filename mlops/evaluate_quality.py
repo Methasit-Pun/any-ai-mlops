@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -39,6 +40,15 @@ Respond with ONLY a JSON object: {{"score": <1-5 integer>, "rationale": "<one se
 Transcript:
 {transcript}
 """
+
+
+# Tagged on every eval/calibration run so a rubric edit shows up as a new version
+# in MLflow instead of silently shifting the score trend.
+RUBRIC_HASH = hashlib.sha256(RUBRIC_PROMPT.encode("utf-8")).hexdigest()[:12]
+
+
+def judge_tags() -> dict[str, str]:
+    return {"judge_model": Config.JUDGE_MODEL, "rubric_hash": RUBRIC_HASH}
 
 
 def rows_to_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
@@ -118,7 +128,7 @@ def run_evaluation(conn, client: genai.Client, agent_id: str, limit: int) -> Non
         mlflow.log_metric("eval_sample_size", len(rows))
         mlflow.log_metric("eval_failed_count", failed)
         mlflow.log_table(data=rows_to_columns(rows), artifact_file="quality_eval.json")
-        mlflow.set_tags({"agent_id": agent_id, "run_type": "quality_eval"})
+        mlflow.set_tags({"agent_id": agent_id, "run_type": "quality_eval", **judge_tags()})
 
     newest = max(_as_utc(row["start_time"]) for row in transcripts)
     checkpoint.set_last_run(eval_checkpoint_key(agent_id), newest)

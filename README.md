@@ -53,6 +53,16 @@ agent failing doesn't stop the others.
 baseline in `data/human_labels.csv`. See [data/README.md](data/README.md) for
 how to add labels.
 
+It exits non-zero when the judge misses the pass bar (defaults: MAE <= 0.75,
+within-1-point rate >= 0.8, at least 10 matched labels; override with
+`--max-mae`, `--min-within-1`, `--min-sample-size`), and warns when the labels
+contain no good (4-5) or no bad (1-2) calls.
+
+Every quality-eval and calibration run is tagged with `judge_model` and
+`rubric_hash` (a hash of `RUBRIC_PROMPT`), so a rubric or model change is
+visible in MLflow instead of silently shifting the score trend. Only compare
+quality scores across runs with the same `rubric_hash`.
+
 ## Tests
 
 ```bash
@@ -82,5 +92,7 @@ can import cleanly under pytest.
   `checkpoint.json` between runs via `actions/cache` rather than relying on
   local disk state — see the comments in that workflow file for how.
 
-There's no calibration job scheduled, since `data/human_labels.csv` has no
-real data yet; run `calibrate_judge.py` manually once it does.
+- [.github/workflows/calibration.yml](.github/workflows/calibration.yml) runs
+  `calibrate_judge.py` every Monday at 04:00 UTC (and on manual dispatch),
+  using the same secrets/vars. A failed run means the judge no longer agrees
+  with the human labels well enough to trust its scores.

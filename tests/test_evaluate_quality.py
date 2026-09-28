@@ -110,7 +110,12 @@ def test_run_evaluation_logs_aggregate_and_table(monkeypatch):
         "score": [3.0, 3.0],
         "rationale": ["ok", "ok"],
     }
-    assert logged_tags == {"agent_id": "agent-1", "run_type": "quality_eval"}
+    assert logged_tags == {
+        "agent_id": "agent-1",
+        "run_type": "quality_eval",
+        "judge_model": evaluate_quality.Config.JUDGE_MODEL,
+        "rubric_hash": evaluate_quality.RUBRIC_HASH,
+    }
     # Checkpoint advances to the newest scored call, so the next run only sees newer ones.
     assert evaluate_quality.checkpoint.get_last_run("quality_eval:agent-1") == newest.replace(tzinfo=timezone.utc)
     evaluate_quality.run_evaluation(conn=object(), client=MagicMock(), agent_id="agent-1", limit=5)
