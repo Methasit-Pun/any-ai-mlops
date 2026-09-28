@@ -53,7 +53,7 @@ def test_run_calibration_computes_agreement_metrics(monkeypatch):
         },
     )
     scores = iter([{"score": 4.0, "rationale": "ok"}, {"score": 3.0, "rationale": "meh"}])
-    monkeypatch.setattr(calibrate_judge, "score_transcript", lambda client, model, transcript: next(scores))
+    monkeypatch.setattr(calibrate_judge, "score_with_retries", lambda client, model, transcript, attempts: next(scores))
 
     result = calibrate_judge.run_calibration(
         conn=object(), client=MagicMock(), model="gemini-2.5-flash", human_labels={"c1": 4.0, "c2": 5.0}
@@ -72,3 +72,31 @@ def test_main_exits_when_labels_file_has_no_rows(tmp_path, monkeypatch):
 
     with pytest.raises(SystemExit, match="no labeled rows"):
         calibrate_judge.main()
+
+
+def _metrics(mae, within_1, n):
+    return {"mae": mae, "within_1_point_rate": within_1, "exact_match_rate": 0.0, "sample_size": n}
+
+
+def test_check_pass_bar_passes_a_good_judge():
+    assert calibrate_judge.check_pass_bar(_metrics(0.5, 0.9, 20), max_mae=0.75, min_within_1=0.8, min_sample_size=10) == []
+
+
+def test_check_pass_bar_lists_every_failure():
+    failures = calibrate_judge.check_pass_bar(_metrics(1.2, 0.5, 4), max_mae=0.75, min_within_1=0.8, min_sample_size=10)
+
+    assert len(failures) == 3
+    assert any(f.startswith("mae") for f in failures)
+    assert any(f.startswith("within_1_point_rate") for f in failures)
+    assert any(f.startswith("sample_size") for f in failures)
+
+
+def test_label_coverage_warning_flags_labels_with_no_good_calls():
+    warning = calibrate_judge.label_coverage_warning({"c1": 1.0, "c2": 3.0})
+
+    assert "good (4-5)" in warning
+    assert "bad (1-2)" not in warning
+
+
+def test_label_coverage_warning_is_none_for_full_range():
+    assert calibrate_judge.label_coverage_warning({"c1": 1.0, "c2": 5.0}) is None

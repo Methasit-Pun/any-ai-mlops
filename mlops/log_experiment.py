@@ -12,7 +12,7 @@ Usage:
 
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import mlflow
@@ -81,6 +81,11 @@ def aggregate_metrics(
     return metrics
 
 
+def experiment_name(agent_id: str, agent_name: str) -> str:
+    """Tracking and quality-eval runs share this experiment per agent."""
+    return f"agent-{agent_id}-{agent_name}"
+
+
 def _prompt_hash(prompt: str) -> str:
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
 
@@ -88,9 +93,14 @@ def _prompt_hash(prompt: str) -> str:
 def log_agent_run(conn, agent: dict[str, Any]) -> None:
     agent_id = agent["id"]
     since = checkpoint.get_last_run(agent_id)
-    now = datetime.now(timezone.utc)
+    # Stop the window short of "now" so calls still in progress (no end_time yet)
+    # aren't counted as failed and then skipped forever once the checkpoint moves on.
+    until = datetime.now(timezone.utc) - timedelta(seconds=Config.IN_PROGRESS_GRACE_SECONDS)
+    if until <= since:
+        logger.info("agent %s: window %s..%s is empty, skipping", agent_id, since, until)
+        return
 
-    conversation_logs = db.get_conversation_logs(conn, agent_id, since)
+    conversation_logs = db.get_conversation_logs(conn, agent_id, since, until)
     if not conversation_logs:
         logger.info("agent %s: no new calls since %s, skipping", agent_id, since)
         return
@@ -108,10 +118,9 @@ def log_agent_run(conn, agent: dict[str, Any]) -> None:
         Config.COST_PER_SECOND,
     )
 
-    experiment_name = f"agent-{agent_id}-{agent['name']}"
-    mlflow.set_experiment(experiment_name)
+    mlflow.set_experiment(experiment_name(agent_id, agent["name"]))
 
-    with mlflow.start_run(run_name=now.isoformat()):
+    with mlflow.start_run(run_name=until.isoformat()):
         mlflow.log_params(
             {
                 "model": agent["model"],
@@ -127,14 +136,15 @@ def log_agent_run(conn, agent: dict[str, Any]) -> None:
         mlflow.set_tags(
             {
                 "agent_id": agent_id,
+                "run_type": "tracking",
                 "window_start": since.isoformat(),
-                "window_end": now.isoformat(),
+                "window_end": until.isoformat(),
                 "agent_config_updated_at": agent["updated_at"].isoformat(),
             }
         )
 
     logger.info("agent %s: logged run with metrics %s", agent_id, metrics)
-    checkpoint.set_last_run(agent_id, now)
+    checkpoint.set_last_run(agent_id, until)
 
 
 def main() -> None:

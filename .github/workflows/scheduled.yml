@@ -7,6 +7,7 @@ name: Scheduled MLOps run
 #   vars.MLFLOW_TRACKING_URI      - your DagsHub MLflow endpoint:
 #                                     https://dagshub.com/<username>/<repo>.mlflow
 #   vars.DAGSHUB_USERNAME         - your DagsHub username
+#   secrets.ALERT_WEBHOOK_URL     - optional; Slack-compatible webhook for regression alerts
 #
 # DagsHub setup (one-time):
 #   1. Sign up at dagshub.com (free) and connect this GitHub repo
@@ -27,6 +28,7 @@ jobs:
       MLFLOW_TRACKING_USERNAME: ${{ vars.DAGSHUB_USERNAME }}
       MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
       CHECKPOINT_PATH: checkpoint.json
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -50,3 +52,8 @@ jobs:
       - run: python -m mlops.log_experiment
 
       - run: python -m mlops.evaluate_quality
+
+      # Runs even if an earlier step failed, so a partial run still gets checked.
+      # Fails the workflow (GitHub emails the owner) when a regression is found.
+      - if: ${{ !cancelled() }}
+        run: python -m mlops.detect_regressions
