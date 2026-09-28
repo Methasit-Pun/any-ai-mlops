@@ -1,10 +1,8 @@
 """Calibrates the Gemini judge (see evaluate_quality.score_transcript) against
 a human-labeled baseline.
 
-There is no baseline yet: data/human_labels.csv is an empty template. Fill it
-in with real `call_id,human_score` rows (score 1-5, using the same rubric as
-evaluate_quality.RUBRIC_PROMPT) before this produces a meaningful comparison.
-Once populated, this re-scores those same transcripts with the judge and
+The baseline is data/human_labels.csv: `call_id,human_score` rows (score 1-5,
+using the same rubric as evaluate_quality.RUBRIC_PROMPT). This re-scores those same transcripts with the judge and
 reports how well it agrees with the human scores (MAE, correlation, % within
 1 point), logged to MLflow under the `judge-calibration` experiment.
 
@@ -22,7 +20,7 @@ from google import genai
 
 from . import db
 from .config import Config
-from .evaluate_quality import rows_to_columns, score_transcript
+from .evaluate_quality import rows_to_columns, score_with_retries
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -56,7 +54,10 @@ def run_calibration(conn, client: genai.Client, model: str, human_labels: dict[s
         if not call_log or not call_log.get("transcription"):
             logger.warning("call %s: no transcription found, skipping", call_id)
             continue
-        judge = score_transcript(client, model, call_log["transcription"])
+        judge = score_with_retries(client, model, call_log["transcription"], Config.JUDGE_MAX_ATTEMPTS)
+        if judge is None:
+            logger.warning("call %s: judge could not score it, skipping", call_id)
+            continue
         rows.append(
             {
                 "call_id": call_id,

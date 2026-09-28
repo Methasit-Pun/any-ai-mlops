@@ -53,7 +53,7 @@ def test_run_calibration_computes_agreement_metrics(monkeypatch):
         },
     )
     scores = iter([{"score": 4.0, "rationale": "ok"}, {"score": 3.0, "rationale": "meh"}])
-    monkeypatch.setattr(calibrate_judge, "score_transcript", lambda client, model, transcript: next(scores))
+    monkeypatch.setattr(calibrate_judge, "score_with_retries", lambda client, model, transcript, attempts: next(scores))
 
     result = calibrate_judge.run_calibration(
         conn=object(), client=MagicMock(), model="gemini-2.5-flash", human_labels={"c1": 4.0, "c2": 5.0}

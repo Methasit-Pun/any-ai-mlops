@@ -24,7 +24,7 @@ mlflow server --backend-store-uri ./mlruns --default-artifact-root ./mlruns --ho
 
 Then open http://localhost:5000 for the UI. A Postgres-backed, containerized
 version of the same stack (plus a runner container for the scripts below) is
-defined one level up, in the sibling `docker-compose.mlops.yml` — use that if
+defined in [docker-compose.mlops.yml](docker-compose.mlops.yml) — use that if
 you want persistence beyond a single machine or a shared team instance.
 
 ## Running the scripts
@@ -36,15 +36,22 @@ python -m mlops.evaluate_quality                         # quality-evaluates eve
 python -m mlops.calibrate_judge                          # checks the judge against data/human_labels.csv
 ```
 
-`log_experiment.py` checkpoints the last-processed timestamp per agent in
-`CHECKPOINT_PATH` (default `./checkpoint.json`) so repeated runs don't
-double-count calls — see [mlops/checkpoint.py](mlops/checkpoint.py).
+Both `log_experiment.py` and `evaluate_quality.py` checkpoint the
+last-processed timestamp per agent in `CHECKPOINT_PATH` (default
+`./checkpoint.json`) so repeated runs don't double-count calls or re-score the
+same transcripts — see [mlops/checkpoint.py](mlops/checkpoint.py).
+`log_experiment.py` also leaves calls from the last `IN_PROGRESS_GRACE_SECONDS`
+(default 3600) for the next run, since they may still be in progress.
+
+The judge retries a failed or invalid response up to `JUDGE_MAX_ATTEMPTS`
+times (default 3); a transcript that still can't be scored is skipped, and one
+agent failing doesn't stop the others.
 
 ## Judge calibration
 
 `mlops/calibrate_judge.py` compares the Gemini judge's scores against a human
-baseline. There's no baseline yet — `data/human_labels.csv` is an empty
-template. See [data/README.md](data/README.md) for how to fill it in.
+baseline in `data/human_labels.csv`. See [data/README.md](data/README.md) for
+how to add labels.
 
 ## Tests
 

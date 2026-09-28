@@ -1,5 +1,8 @@
-from datetime import datetime, timezone
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 
+from mlops import log_experiment
 from mlops.log_experiment import aggregate_metrics
 
 
@@ -45,3 +48,37 @@ def test_falls_back_to_call_log_cost_when_metadata_missing():
 
     assert result["total_cost"] == 7.5
     assert result["success_rate"] == 1.0  # status "answered" counts as completed
+
+
+def test_log_agent_run_leaves_recent_calls_for_the_next_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(log_experiment.checkpoint.Config, "CHECKPOINT_PATH", str(tmp_path / "checkpoint.json"))
+    monkeypatch.setattr(log_experiment.Config, "IN_PROGRESS_GRACE_SECONDS", 3600)
+    windows = []
+
+    def fake_logs(conn, config_id, since, until):
+        windows.append((since, until))
+        return [{"call_id": "c1", "duration": 10, "end_time": None, "metadata": None}]
+
+    monkeypatch.setattr(log_experiment.db, "get_conversation_logs", fake_logs)
+    monkeypatch.setattr(log_experiment.db, "get_call_logs_by_ids", lambda conn, ids: {})
+    monkeypatch.setattr(log_experiment.db, "get_call_summaries_by_ids", lambda conn, ids: {})
+    monkeypatch.setattr(log_experiment.db, "get_appointment_count_by_call_ids", lambda conn, ids: 0)
+    for name in ("set_experiment", "log_params", "log_text", "log_metrics", "set_tags"):
+        monkeypatch.setattr(log_experiment.mlflow, name, MagicMock())
+
+    @contextmanager
+    def fake_start_run(run_name=None):
+        yield MagicMock()
+
+    monkeypatch.setattr(log_experiment.mlflow, "start_run", fake_start_run)
+
+    agent = {
+        "id": "a1", "name": "Reception", "model": "m", "temperature": 0.5, "voice": "v",
+        "language": "th", "max_duration": 300, "prompt": "hi", "updated_at": datetime.now(timezone.utc),
+    }
+    before = datetime.now(timezone.utc)
+    log_experiment.log_agent_run(conn=object(), agent=agent)
+
+    _, until = windows[0]
+    assert until <= before - timedelta(seconds=3600) + timedelta(seconds=5)
+    assert log_experiment.checkpoint.get_last_run("a1") == until

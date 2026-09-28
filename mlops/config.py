@@ -12,3 +12,7 @@ class Config:
     JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-flash")
     CHECKPOINT_PATH = os.environ.get("CHECKPOINT_PATH", "./checkpoint.json")
     COST_PER_SECOND = float(os.environ.get("COST_PER_SECOND", "0.05"))
+    # Calls that started less than this long ago may still be in progress, so
+    # log_experiment leaves them for the next run instead of counting them as failed.
+    IN_PROGRESS_GRACE_SECONDS = int(os.environ.get("IN_PROGRESS_GRACE_SECONDS", "3600"))
+    JUDGE_MAX_ATTEMPTS = int(os.environ.get("JUDGE_MAX_ATTEMPTS", "3"))

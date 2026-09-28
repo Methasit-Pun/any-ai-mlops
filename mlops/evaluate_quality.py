@@ -1,9 +1,10 @@
 """LLM-as-judge quality evaluation for a booking voice agent's transcripts.
 
-Samples recent CallLog.transcription rows for one agent, scores each with a
-Gemini judge against a booking-flow-specific rubric, and logs the per-example
-scores plus the aggregate as an MLflow run — tracking and quality live under
-the same experiment (`agent-<id>-<name>`) so they can be viewed together.
+Samples an agent's transcripts that haven't been scored yet (tracked per agent
+in the checkpoint file), scores each with a Gemini judge against a
+booking-flow-specific rubric, and logs the per-example scores plus the
+aggregate as an MLflow run — tracking and quality live under the same
+experiment (`agent-<id>-<name>`) so they can be viewed together.
 
 Usage:
     python -m mlops.evaluate_quality --agent-id <id> --limit 20
@@ -13,13 +14,14 @@ Usage:
 import argparse
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import mlflow
 from google import genai
 from google.genai import types
 
-from . import db
+from . import checkpoint, db
 from .config import Config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -44,6 +46,11 @@ def rows_to_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
     return {key: [row[key] for row in rows] for key in rows[0]}
 
 
+def eval_checkpoint_key(agent_id: str) -> str:
+    """Separate key from log_experiment's per-agent checkpoint in the same file."""
+    return f"quality_eval:{agent_id}"
+
+
 def score_transcript(client: genai.Client, model: str, transcript: str) -> dict[str, Any]:
     response = client.models.generate_content(
         model=model,
@@ -54,7 +61,26 @@ def score_transcript(client: genai.Client, model: str, transcript: str) -> dict[
         ),
     )
     parsed = json.loads(response.text)
-    return {"score": float(parsed["score"]), "rationale": parsed.get("rationale", "")}
+    score = float(parsed["score"])
+    if not 1 <= score <= 5:
+        raise ValueError(f"judge score out of range 1-5: {score}")
+    return {"score": score, "rationale": parsed.get("rationale", "")}
+
+
+def score_with_retries(client: genai.Client, model: str, transcript: str, attempts: int) -> dict[str, Any] | None:
+    """Returns None instead of raising when every attempt fails (bad JSON, out-of-range
+    score, API error), so one bad transcript doesn't abort the whole run."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return score_transcript(client, model, transcript)
+        except Exception as exc:  # noqa: BLE001 - any judge failure is retryable here
+            logger.warning("judge attempt %d/%d failed: %s", attempt, attempts, exc)
+    return None
+
+
+def _as_utc(ts: datetime) -> datetime:
+    # conversation_logs.start_time is a Prisma timestamp without time zone, stored in UTC.
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
 
 
 def run_evaluation(conn, client: genai.Client, agent_id: str, limit: int) -> None:
@@ -62,15 +88,25 @@ def run_evaluation(conn, client: genai.Client, agent_id: str, limit: int) -> Non
     if agent is None:
         raise ValueError(f"no agent_config found with id={agent_id}")
 
-    transcripts = db.get_recent_transcriptions(conn, agent_id, limit)
+    since = checkpoint.get_last_run(eval_checkpoint_key(agent_id))
+    transcripts = db.get_recent_transcriptions(conn, agent_id, limit, since)
     if not transcripts:
-        logger.info("agent %s: no transcripts available to evaluate", agent_id)
+        logger.info("agent %s: no new transcripts since %s to evaluate", agent_id, since)
         return
 
     rows = []
+    failed = 0
     for row in transcripts:
-        result = score_transcript(client, Config.JUDGE_MODEL, row["transcription"])
+        result = score_with_retries(client, Config.JUDGE_MODEL, row["transcription"], Config.JUDGE_MAX_ATTEMPTS)
+        if result is None:
+            failed += 1
+            logger.warning("agent %s: call %s could not be scored, skipping", agent_id, row["call_id"])
+            continue
         rows.append({"call_id": row["call_id"], **result})
+
+    if not rows:
+        # Leave the checkpoint where it is so these transcripts are retried next run.
+        raise RuntimeError(f"agent {agent_id}: judge failed on all {len(transcripts)} transcripts")
 
     avg_score = sum(r["score"] for r in rows) / len(rows)
 
@@ -80,9 +116,12 @@ def run_evaluation(conn, client: genai.Client, agent_id: str, limit: int) -> Non
     with mlflow.start_run(run_name="quality-eval"):
         mlflow.log_metric("avg_quality_score", avg_score)
         mlflow.log_metric("eval_sample_size", len(rows))
+        mlflow.log_metric("eval_failed_count", failed)
         mlflow.log_table(data=rows_to_columns(rows), artifact_file="quality_eval.json")
         mlflow.set_tags({"agent_id": agent_id, "run_type": "quality_eval"})
 
+    newest = max(_as_utc(row["start_time"]) for row in transcripts)
+    checkpoint.set_last_run(eval_checkpoint_key(agent_id), newest)
     logger.info("agent %s: avg_quality_score=%.2f over %d transcripts", agent_id, avg_score, len(rows))
 
 
@@ -102,8 +141,16 @@ def main() -> None:
 
         agents = db.get_active_agent_configs(conn)
         logger.info("found %d active agent(s)", len(agents))
+        failed_agents = []
         for agent in agents:
-            run_evaluation(conn, client, agent["id"], args.limit)
+            try:
+                run_evaluation(conn, client, agent["id"], args.limit)
+            except Exception:  # noqa: BLE001 - keep evaluating the other agents
+                logger.exception("agent %s: evaluation failed", agent["id"])
+                failed_agents.append(agent["id"])
+
+    if failed_agents:
+        raise SystemExit(f"evaluation failed for agent(s): {', '.join(failed_agents)}")
 
 
 if __name__ == "__main__":

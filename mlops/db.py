@@ -49,16 +49,16 @@ def get_active_agent_configs(conn) -> list[dict[str, Any]]:
         return cur.fetchall()
 
 
-def get_conversation_logs(conn, config_id: str, since: datetime) -> list[dict[str, Any]]:
+def get_conversation_logs(conn, config_id: str, since: datetime, until: datetime) -> list[dict[str, Any]]:
     with _dict_cursor(conn) as cur:
         cur.execute(
             """
             SELECT call_id, start_time, end_time, duration, metadata
             FROM conversation_logs
-            WHERE config_id = %s AND start_time >= %s
+            WHERE config_id = %s AND start_time >= %s AND start_time < %s
             ORDER BY start_time
             """,
-            (config_id, since),
+            (config_id, since, until),
         )
         return cur.fetchall()
 
@@ -147,25 +147,31 @@ def get_agent_config_by_id(conn, agent_id: str) -> dict[str, Any] | None:
         return cur.fetchone()
 
 
-def get_recent_transcriptions(conn, agent_id: str, limit: int) -> list[dict[str, Any]]:
+def get_recent_transcriptions(conn, agent_id: str, limit: int, since: datetime) -> list[dict[str, Any]]:
     """Reads transcripts from conversation_logs.messages, keyed by config_id (the
     AgentConfig.id) — call_logs.agent_id/.transcription are never populated by
-    any-ai-backend, so call_logs can't be the source for this.
+    any-ai-backend, so call_logs can't be the source for this. Only calls started
+    after `since` are returned, so already-scored transcripts aren't re-scored.
     """
     with _dict_cursor(conn) as cur:
         cur.execute(
             """
-            SELECT call_id, messages
+            SELECT call_id, start_time, messages
             FROM conversation_logs
             WHERE config_id = %s
+              AND start_time > %s
               AND CASE WHEN jsonb_typeof(messages) = 'array' THEN jsonb_array_length(messages) > 0 ELSE false END
             ORDER BY start_time DESC
             LIMIT %s
             """,
-            (agent_id, limit),
+            (agent_id, since, limit),
         )
         return [
-            {"call_id": row["call_id"], "transcription": format_transcript(row["messages"])}
+            {
+                "call_id": row["call_id"],
+                "start_time": row["start_time"],
+                "transcription": format_transcript(row["messages"]),
+            }
             for row in cur.fetchall()
         ]
 

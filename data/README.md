@@ -1,8 +1,7 @@
 # data/
 
-`human_labels.csv` is the baseline for `mlops.calibrate_judge`. It's currently
-empty (header only) — no human scoring has happened yet, and nothing in this
-repo can fill it in for you: a human score is the whole point of comparison,
+`human_labels.csv` is the baseline for `mlops.calibrate_judge`. Nothing in
+this repo can fill it in for you: a human score is the whole point of comparison,
 so generating it automatically would just be comparing the judge to itself.
 
 To use it:
