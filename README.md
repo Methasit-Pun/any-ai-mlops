@@ -46,6 +46,39 @@ double-count calls — see [mlops/checkpoint.py](mlops/checkpoint.py).
 baseline. There's no baseline yet — `data/human_labels.csv` is an empty
 template. See [data/README.md](data/README.md) for how to fill it in.
 
+## Weekly per-scenario accuracy
+
+Runs a golden set of scripted-caller cases (booking happy/edge paths, FAQ, workshop,
+full buy-out, special occasion, human handoff, change-at-summary, out-of-scope) against
+the booking FSM in `any-chat-backend`, 3 trials per case, then logs to MLflow, applies a
+regression gate, writes `reports/<YYYY-Www>.md` and emails it (default recipient
+`methasitpun@gmail.com`, override with `REPORT_TO`).
+
+```bash
+# 1. in any-chat-backend: drive the FSM with simulated callers -> eval/results.json
+npm run eval:weekly -- --trials 1 --scenario faq     # quick smoke
+npm run eval:weekly                                  # full run (slow: ~4s per turn on the free Gemini tier)
+
+# 2. here: score + MLflow + report (+ email)
+python -m mlops.eval_suite --results ../any-chat-backend/eval/results.json --no-email
+```
+
+- **Deterministic metrics** (trust these most): task success, routing accuracy, slot accuracy,
+  path correctness, turns, stuck turns, FSM latency p50/p95, infra error rate, case consistency.
+- **Judge metrics** (need `GOOGLE_API_KEY`, skip with `--no-judge`): quality 1-5 and hallucination
+  rate, checked against the FAQ knowledge base. Calibrate the judge first (`calibrate_judge.py`).
+- **Gate:** per-scenario targets and the max week-over-week drop live in `TARGETS` / `MAX_REGRESSION`
+  in [mlops/eval_suite.py](mlops/eval_suite.py). The baseline is the last run on the same
+  `dataset_version` that passed. The first run for a dataset version only has the absolute targets.
+- **Dataset:** `any-chat-backend/eval/golden.json` (bump `dataset_version` when cases change so
+  baselines don't mix).
+- **Schedule:** [.github/workflows/weekly_accuracy.yml](.github/workflows/weekly_accuracy.yml),
+  Mondays 02:00 UTC. The header lists the secrets/vars it needs, including `SMTP_USER` /
+  `SMTP_PASSWORD` (Gmail App Password) for the email.
+
+Not covered yet: the voice (LiveKit/ASR) layer, and rescheduling/cancelling an *existing*
+booking — the FSM has no such flow, so there is nothing to test.
+
 ## Tests
 
 ```bash

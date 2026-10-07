@@ -17,3 +17,6 @@ data/transcripts_for_labeling.csv
 # OS
 .DS_Store
 Thumbs.db
+
+# Generated weekly reports
+reports/

@@ -1,0 +1,94 @@
+name: Weekly accuracy run
+
+# Runs the golden-set per-scenario accuracy suite against the booking FSM in
+# any-chat-backend, logs it to MLflow, and emails the report.
+#
+# Requires, in Settings > Secrets and variables > Actions:
+#   secrets.CHAT_BACKEND_TOKEN   - PAT (or deploy key token) with read access to the any-chat-backend repo
+#   secrets.GEMINI_API_KEY       - key used by the agent under test and the simulated caller
+#   secrets.GOOGLE_API_KEY       - key for the Gemini judge (can be the same key)
+#   secrets.DAGSHUB_TOKEN        - DagsHub access token
+#   secrets.SMTP_USER            - sender address, e.g. a Gmail account
+#   secrets.SMTP_PASSWORD        - for Gmail: an App Password (Google Account > Security > App passwords)
+#   vars.CHAT_BACKEND_REPO       - "<owner>/any-chat-backend"
+#   vars.MLFLOW_TRACKING_URI     - https://dagshub.com/<username>/<repo>.mlflow
+#   vars.DAGSHUB_USERNAME        - your DagsHub username
+#   vars.REPORT_TO               - optional, defaults to methasitpun@gmail.com
+#
+# The report is emailed whenever the run completes (subject says PASSED or ATTENTION).
+# The job itself goes red when the regression gate fails, so GitHub also notifies you.
+on:
+  schedule:
+    - cron: "0 2 * * 1" # Mondays 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      trials:
+        description: "Trials per case"
+        default: "3"
+      scenario:
+        description: "Only run this scenario (blank = all)"
+        default: ""
+
+jobs:
+  weekly-accuracy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Checkout MLOps repo
+        uses: actions/checkout@v4
+
+      - name: Checkout agent under test
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.CHAT_BACKEND_REPO }}
+          token: ${{ secrets.CHAT_BACKEND_TOKEN }}
+          path: any-chat-backend
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: any-chat-backend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          npm ci --prefix any-chat-backend
+          pip install -r requirements.txt
+
+      - name: Run golden-set simulations
+        working-directory: any-chat-backend
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          EVAL_TRIALS: ${{ inputs.trials || '3' }}
+        run: |
+          SCENARIO="${{ inputs.scenario }}"
+          if [ -n "$SCENARIO" ]; then
+            npm run eval:weekly -- --scenario "$SCENARIO"
+          else
+            npm run eval:weekly
+          fi
+
+      - name: Score, log to MLflow, report, email
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ vars.DAGSHUB_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          REPORT_TO: ${{ vars.REPORT_TO || 'methasitpun@gmail.com' }}
+        run: python -m mlops.eval_suite --results any-chat-backend/eval/results.json --report-out reports
+
+      - name: Upload report and raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-accuracy-${{ github.run_id }}
+          path: |
+            reports/
+            any-chat-backend/eval/results.json
+          if-no-files-found: ignore
